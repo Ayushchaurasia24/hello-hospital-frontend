@@ -266,6 +266,39 @@ function App() {
                 <h3>{item.fileName}</h3>
 
                 <p>
+                  <b>Status:</b>{" "}
+
+                  <span
+                    style={{
+
+                      padding: "4px 10px",
+
+                      borderRadius: "20px",
+
+                      color: "white",
+
+                      fontWeight: "bold",
+
+                      backgroundColor:
+
+                        item.status === "queued"
+                          ? "#f59e0b"
+
+                        : item.status === "processing"
+                          ? "#3b82f6"
+
+                        : item.status === "completed"
+                          ? "#10b981"
+
+                        : "#ef4444",
+                    }}
+                  >
+
+                    {item.status}
+
+                  </span>
+                </p>
+                <p>
                   <b>📂 Type:</b>{" "}
                   {item.type?.join(", ")}
                 </p>
