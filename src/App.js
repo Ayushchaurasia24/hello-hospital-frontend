@@ -1,11 +1,32 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 
 function App() {
   const [files, setFiles] = useState([]);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [filter, setFilter] = useState("All"); // 🔥 NEW
+
+  // 🔍 Search + Filter
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedType, setSelectedType] = useState("All");
+
+  // 🚀 FETCH SAVED DOCUMENTS ON PAGE LOAD
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
+
+  // 📥 FETCH FROM MONGODB
+  const fetchDocuments = async () => {
+    try {
+      const res = await axios.get(
+        "http://localhost:5000/upload/documents"
+      );
+
+      setResults(res.data || []);
+    } catch (error) {
+      console.error("Fetch error:", error);
+    }
+  };
 
   // 📤 Upload
   const handleUpload = async () => {
@@ -15,17 +36,22 @@ function App() {
     }
 
     const formData = new FormData();
-    Array.from(files).forEach((file) => formData.append("files", file));
+
+    Array.from(files).forEach((file) => {
+      formData.append("files", file);
+    });
 
     try {
       setLoading(true);
 
-      const res = await axios.post(
+      await axios.post(
         "http://localhost:5000/upload",
         formData
       );
 
-      setResults(res.data.results || []);
+      // 🚀 Refresh latest DB documents
+      await fetchDocuments();
+
     } catch (err) {
       console.error(err);
       alert("Backend connection failed");
@@ -42,48 +68,66 @@ function App() {
 
     const fallback = item.cleanText?.match(/\b[A-Z]{5,}\b/g) || [];
 
-    return fallback
-      .filter(
-        (w) =>
-          !w.includes("HOSP") &&
-          !w.includes("MED") &&
-          !w.includes("SOC") &&
-          w.length < 12
-      )
-      .slice(0, 3)
-      .join(", ") || "N/A";
+    return (
+      fallback
+        .filter(
+          (w) =>
+            !w.includes("HOSP") &&
+            !w.includes("MED") &&
+            !w.includes("SOC") &&
+            w.length < 12
+        )
+        .slice(0, 3)
+        .join(", ") || "N/A"
+    );
   };
 
-  // 📂 Group by primary type (NO DUPLICATES)
-  const groupByType = () => {
+  // 👤 GROUP BY PATIENT
+  const groupByPatient = () => {
     const grouped = {};
 
     results.forEach((item) => {
-      const mainType = item.type?.[0] || "Unknown";
+      const patient =
+        item.extractedData?.patientName || "Unknown Patient";
 
-      if (!grouped[mainType]) grouped[mainType] = [];
-      grouped[mainType].push(item);
+      if (!grouped[patient]) {
+        grouped[patient] = [];
+      }
+
+      grouped[patient].push(item);
     });
 
     return grouped;
   };
 
-  const groupedResults = groupByType();
+  const groupedPatients = groupByPatient();
 
-  // 🎯 Filtered groups
-  const filteredGroups =
-    filter === "All"
-      ? groupedResults
-      : { [filter]: groupedResults[filter] || [] };
+  // 🔍 FILTER LOGIC
+  const filteredPatients = Object.entries(groupedPatients).filter(
+    ([patientName, docs]) => {
 
-  // 🧠 Extract available types dynamically
-  const availableTypes = Object.keys(groupedResults).filter(
-    (t) => t !== "Unknown"
+      // Search filter
+      const matchesSearch = patientName
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase());
+
+      // Type filter
+      const matchesType =
+        selectedType === "All"
+          ? true
+          : docs.some((doc) =>
+              doc.type?.includes(selectedType)
+            );
+
+      return matchesSearch && matchesType;
+    }
   );
 
   return (
     <div style={styles.container}>
-      <h1 style={styles.title}>🏥 Medical Document Analyzer</h1>
+      <h1 style={styles.title}>
+        🏥 Medical Document Analyzer
+      </h1>
 
       {/* Upload */}
       <div style={styles.uploadBox}>
@@ -98,65 +142,102 @@ function App() {
         </button>
       </div>
 
-      <h3>Total Documents: {results.length}</h3>
+      {/* 🔍 SEARCH + FILTER */}
+      <div style={styles.filterBox}>
+        <input
+          type="text"
+          placeholder="🔍 Search patient..."
+          value={searchTerm}
+          onChange={(e) =>
+            setSearchTerm(e.target.value)
+          }
+          style={styles.searchInput}
+        />
 
-      {/* 🔥 FILTER BUTTONS */}
-      <div style={styles.filterContainer}>
-        <button
-          style={filter === "All" ? styles.activeBtn : styles.filterBtn}
-          onClick={() => setFilter("All")}
+        <select
+          value={selectedType}
+          onChange={(e) =>
+            setSelectedType(e.target.value)
+          }
+          style={styles.select}
         >
-          All
-        </button>
-
-        {availableTypes.map((type) => (
-          <button
-            key={type}
-            style={filter === type ? styles.activeBtn : styles.filterBtn}
-            onClick={() => setFilter(type)}
-          >
-            {type}
-          </button>
-        ))}
+          <option value="All">All</option>
+          <option value="Prescription">
+            Prescription
+          </option>
+          <option value="Bill">
+            Bill
+          </option>
+          <option value="Lab Report">
+            Lab Report
+          </option>
+          <option value="Receipt">
+            Receipt
+          </option>
+          <option value="Discharge Summary">
+            Discharge Summary
+          </option>
+        </select>
       </div>
+
+      <h3>Total Documents: {results.length}</h3>
 
       <hr />
 
       {loading && <p>Processing documents...</p>}
 
-      {/* RESULTS */}
-      {Object.entries(filteredGroups)
-        .filter(([type]) => type !== "Unknown")
-        .map(([type, docs]) => (
-          <div key={type} style={{ marginBottom: "25px" }}>
-            <h2 style={styles.sectionTitle}>
-              {type === "Prescription" && "💊 Prescriptions"}
-              {type === "Bill" && "💰 Bills"}
-              {type === "Lab Report" && "🧪 Lab Reports"}
-              {type === "Receipt" && "🧾 Receipts"}
+      {/* 👤 PATIENT GROUPS */}
+      {filteredPatients.map(
+        ([patientName, docs]) => (
+          <div
+            key={patientName}
+            style={styles.patientSection}
+          >
+            {/* 👤 PATIENT HEADER */}
+            <h2 style={styles.patientTitle}>
+              👤 {patientName}
             </h2>
 
+            {/* 📄 DOCUMENTS */}
             {docs.map((item, index) => (
               <div key={index} style={styles.card}>
                 <h3>{item.fileName}</h3>
 
-                <p><b>👤 Patient:</b> {item.extractedData?.patientName || "N/A"}</p>
-                <p><b>📅 Date:</b> {item.extractedData?.date || "N/A"}</p>
-                <p><b>💰 Amount:</b> ₹{item.extractedData?.amount || "N/A"}</p>
-                <p><b>💊 Medicines:</b> {getMedicines(item)}</p>
+                <p>
+                  <b>📂 Type:</b>{" "}
+                  {item.type?.join(", ") || "Unknown"}
+                </p>
+
+                <p>
+                  <b>📅 Date:</b>{" "}
+                  {item.extractedData?.date || "N/A"}
+                </p>
+
+                <p>
+                  <b>💰 Amount:</b> ₹
+                  {item.extractedData?.amount || "N/A"}
+                </p>
+
+                <p>
+                  <b>💊 Medicines:</b>{" "}
+                  {getMedicines(item)}
+                </p>
 
                 {item.confidence && (
                   <p style={styles.confidence}>
                     Confidence:{" "}
                     {Object.entries(item.confidence)
-                      .map(([k, v]) => `${k} (${v})`)
+                      .map(
+                        ([k, v]) => `${k} (${v})`
+                      )
                       .join(", ")}
                   </p>
                 )}
               </div>
             ))}
           </div>
-        ))}
+        )
+      )}
     </div>
   );
 }
@@ -169,14 +250,17 @@ const styles = {
     minHeight: "100vh",
     fontFamily: "Arial",
   },
+
   title: {
     textAlign: "center",
     marginBottom: "20px",
   },
+
   uploadBox: {
     textAlign: "center",
     marginBottom: "20px",
   },
+
   button: {
     marginTop: "10px",
     padding: "10px 20px",
@@ -187,33 +271,39 @@ const styles = {
     cursor: "pointer",
   },
 
-  // 🔥 FILTER BUTTONS
-  filterContainer: {
-    marginTop: "15px",
-    textAlign: "center",
+  // 🔍 FILTERS
+  filterBox: {
+    display: "flex",
+    gap: "10px",
+    marginBottom: "20px",
   },
-  filterBtn: {
-    margin: "5px",
-    padding: "8px 16px",
+
+  searchInput: {
+    flex: 1,
+    padding: "10px",
+    borderRadius: "6px",
     border: "1px solid #ccc",
-    borderRadius: "6px",
-    cursor: "pointer",
-    backgroundColor: "white",
-  },
-  activeBtn: {
-    margin: "5px",
-    padding: "8px 16px",
-    border: "none",
-    borderRadius: "6px",
-    cursor: "pointer",
-    backgroundColor: "#2563eb",
-    color: "white",
   },
 
-  sectionTitle: {
+  select: {
+    padding: "10px",
+    borderRadius: "6px",
+    border: "1px solid #ccc",
+  },
+
+  // 👤 PATIENT SECTION
+  patientSection: {
+    marginBottom: "40px",
+  },
+
+  patientTitle: {
     color: "#2563eb",
+    marginBottom: "15px",
+    borderBottom: "2px solid #2563eb",
+    paddingBottom: "5px",
   },
 
+  // 📄 CARD
   card: {
     backgroundColor: "white",
     borderRadius: "12px",
