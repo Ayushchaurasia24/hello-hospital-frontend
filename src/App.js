@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 
 function App() {
@@ -6,16 +6,16 @@ function App() {
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // 🔍 Search + Filter
+  // 🔍 Filters
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedType, setSelectedType] = useState("All");
 
-  // 🚀 FETCH SAVED DOCUMENTS ON PAGE LOAD
+  // 🚀 Initial Fetch
   useEffect(() => {
     fetchDocuments();
   }, []);
 
-  // 📥 FETCH FROM MONGODB
+  // 📥 Fetch Docs
   const fetchDocuments = async () => {
     try {
       const res = await axios.get(
@@ -24,12 +24,13 @@ function App() {
 
       setResults(res.data || []);
     } catch (error) {
-      console.error("Fetch error:", error);
+      console.error("Fetch Error:", error);
     }
   };
 
   // 📤 Upload
   const handleUpload = async () => {
+
     if (!files.length) {
       alert("Please select files");
       return;
@@ -42,31 +43,79 @@ function App() {
     });
 
     try {
+
       setLoading(true);
 
+      // 📤 Upload files
       await axios.post(
         "http://localhost:5000/upload",
         formData
       );
 
-      // 🚀 Refresh latest DB documents
-      await fetchDocuments();
+      // 🔄 Poll DB every 3 sec
+      const oldCount = results.length;
 
-    } catch (err) {
-      console.error(err);
-      alert("Backend connection failed");
-    } finally {
+      const interval = setInterval(async () => {
+
+        try {
+
+          const res = await axios.get(
+            "http://localhost:5000/upload/documents"
+          );
+
+          const newDocs = res.data || [];
+
+          setResults(newDocs);
+
+          console.log(
+            "Polling...",
+            newDocs.length
+          );
+
+          // ✅ Stop immediately when new doc appears
+          if (newDocs.length > oldCount) {
+
+            clearInterval(interval);
+
+            setLoading(false);
+
+            console.log(
+              "✅ New documents received"
+            );
+          }
+
+        } catch (error) {
+
+          console.error(
+            "Polling error:",
+            error
+          );
+
+          clearInterval(interval);
+
+          setLoading(false);
+        }
+
+      }, 3000);
+
+    } catch (error) {
+
+      console.error(error);
+
+      alert("Upload failed");
+
       setLoading(false);
     }
   };
 
-  // 💊 Medicines fallback
+  // 💊 Medicine Fallback
   const getMedicines = (item) => {
-    if (item.extractedData?.medicines?.length) {
+    if (item?.extractedData?.medicines?.length) {
       return item.extractedData.medicines.join(", ");
     }
 
-    const fallback = item.cleanText?.match(/\b[A-Z]{5,}\b/g) || [];
+    const fallback =
+      item?.cleanText?.match(/\b[A-Z]{5,}\b/g) || [];
 
     return (
       fallback
@@ -82,13 +131,14 @@ function App() {
     );
   };
 
-  // 👤 GROUP BY PATIENT
-  const groupByPatient = () => {
+  // 👤 Group By Patient
+  const groupedPatients = useMemo(() => {
     const grouped = {};
 
     results.forEach((item) => {
       const patient =
-        item.extractedData?.patientName || "Unknown Patient";
+        item?.extractedData?.patientName?.trim() ||
+        "Unknown Patient";
 
       if (!grouped[patient]) {
         grouped[patient] = [];
@@ -98,33 +148,33 @@ function App() {
     });
 
     return grouped;
-  };
+  }, [results]);
 
-  const groupedPatients = groupByPatient();
+  // 🔍 Filtered Patients
+  const filteredPatients = useMemo(() => {
+    return Object.entries(groupedPatients).filter(
+      ([patientName, docs]) => {
 
-  // 🔍 FILTER LOGIC
-  const filteredPatients = Object.entries(groupedPatients).filter(
-    ([patientName, docs]) => {
+        const matchesSearch =
+          patientName
+            .toLowerCase()
+            .includes(searchTerm.toLowerCase());
 
-      // Search filter
-      const matchesSearch = patientName
-        .toLowerCase()
-        .includes(searchTerm.toLowerCase());
+        const matchesType =
+          selectedType === "All"
+            ? true
+            : docs.some((doc) =>
+                doc.type?.includes(selectedType)
+              );
 
-      // Type filter
-      const matchesType =
-        selectedType === "All"
-          ? true
-          : docs.some((doc) =>
-              doc.type?.includes(selectedType)
-            );
-
-      return matchesSearch && matchesType;
-    }
-  );
+        return matchesSearch && matchesType;
+      }
+    );
+  }, [groupedPatients, searchTerm, selectedType]);
 
   return (
     <div style={styles.container}>
+
       <h1 style={styles.title}>
         🏥 Medical Document Analyzer
       </h1>
@@ -137,13 +187,19 @@ function App() {
           onChange={(e) => setFiles(e.target.files)}
         />
 
-        <button style={styles.button} onClick={handleUpload}>
-          {loading ? "⏳ Processing..." : "🚀 Upload & Analyze"}
+        <button
+          style={styles.button}
+          onClick={handleUpload}
+        >
+          {loading
+            ? "⏳ Processing..."
+            : "🚀 Upload & Analyze"}
         </button>
       </div>
 
-      {/* 🔍 SEARCH + FILTER */}
+      {/* Filters */}
       <div style={styles.filterBox}>
+
         <input
           type="text"
           placeholder="🔍 Search patient..."
@@ -178,44 +234,50 @@ function App() {
             Discharge Summary
           </option>
         </select>
+
       </div>
 
-      <h3>Total Documents: {results.length}</h3>
+      <h3>
+        Total Documents: {results.length}
+      </h3>
 
       <hr />
 
-      {loading && <p>Processing documents...</p>}
-
-      {/* 👤 PATIENT GROUPS */}
+      {/* 👤 Patients */}
       {filteredPatients.map(
         ([patientName, docs]) => (
+
           <div
             key={patientName}
             style={styles.patientSection}
           >
-            {/* 👤 PATIENT HEADER */}
+
             <h2 style={styles.patientTitle}>
               👤 {patientName}
             </h2>
 
-            {/* 📄 DOCUMENTS */}
             {docs.map((item, index) => (
-              <div key={index} style={styles.card}>
+
+              <div
+                key={index}
+                style={styles.card}
+              >
+
                 <h3>{item.fileName}</h3>
 
                 <p>
                   <b>📂 Type:</b>{" "}
-                  {item.type?.join(", ") || "Unknown"}
+                  {item.type?.join(", ")}
                 </p>
 
                 <p>
                   <b>📅 Date:</b>{" "}
-                  {item.extractedData?.date || "N/A"}
+                  {item?.extractedData?.date || "N/A"}
                 </p>
 
                 <p>
                   <b>💰 Amount:</b> ₹
-                  {item.extractedData?.amount || "N/A"}
+                  {item?.extractedData?.amount || "N/A"}
                 </p>
 
                 <p>
@@ -223,26 +285,19 @@ function App() {
                   {getMedicines(item)}
                 </p>
 
-                {item.confidence && (
-                  <p style={styles.confidence}>
-                    Confidence:{" "}
-                    {Object.entries(item.confidence)
-                      .map(
-                        ([k, v]) => `${k} (${v})`
-                      )
-                      .join(", ")}
-                  </p>
-                )}
               </div>
+
             ))}
+
           </div>
+
         )
       )}
+
     </div>
   );
 }
 
-// 🎨 STYLES
 const styles = {
   container: {
     padding: "30px",
@@ -271,7 +326,6 @@ const styles = {
     cursor: "pointer",
   },
 
-  // 🔍 FILTERS
   filterBox: {
     display: "flex",
     gap: "10px",
@@ -291,7 +345,6 @@ const styles = {
     border: "1px solid #ccc",
   },
 
-  // 👤 PATIENT SECTION
   patientSection: {
     marginBottom: "40px",
   },
@@ -303,18 +356,12 @@ const styles = {
     paddingBottom: "5px",
   },
 
-  // 📄 CARD
   card: {
     backgroundColor: "white",
     borderRadius: "12px",
     padding: "20px",
     marginBottom: "15px",
     boxShadow: "0 4px 10px rgba(0,0,0,0.08)",
-  },
-
-  confidence: {
-    fontSize: "12px",
-    color: "gray",
   },
 };
 
