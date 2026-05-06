@@ -1,93 +1,105 @@
 import React, { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 
+const API = "http://localhost:5000/upload";
+
+const STATUS_COLORS = {
+  queued: "#f59e0b",
+  processing: "#3b82f6",
+  completed: "#10b981",
+  failed: "#ef4444",
+};
+
 function App() {
+
+  // ================= STATE =================
   const [files, setFiles] = useState([]);
   const [results, setResults] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // 🔍 Filters
+  // ================= FILTERS =================
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedType, setSelectedType] = useState("All");
 
-  // 🚀 Initial Fetch
+  // ================= INITIAL FETCH =================
   useEffect(() => {
     fetchDocuments();
   }, []);
 
-  // 📥 Fetch Docs
+  // ================= FETCH DOCUMENTS =================
   const fetchDocuments = async () => {
     try {
-      const res = await axios.get(
-        "http://localhost:5000/upload/documents"
-      );
-
+      const res = await axios.get(`${API}/documents`);
       setResults(res.data || []);
     } catch (error) {
       console.error("Fetch Error:", error);
     }
   };
 
-  // 📤 Upload
+  // ================= FILE UPLOAD =================
   const handleUpload = async () => {
 
-    if (!files.length) {
-      alert("Please select files");
-      return;
-    }
+    if (!files.length)
+      return alert("Please select files");
 
     const formData = new FormData();
 
-    Array.from(files).forEach((file) => {
-      formData.append("files", file);
-    });
+    Array.from(files).forEach((file) =>
+      formData.append("files", file)
+    );
 
     try {
 
       setLoading(true);
 
-      // 📤 Upload files
-      await axios.post(
-        "http://localhost:5000/upload",
+      // Upload Files
+      const uploadRes = await axios.post(
+        API,
         formData
       );
 
-      // 🔄 Poll DB every 3 sec
-      const oldCount = results.length;
+      const uploadedIds =
+        uploadRes.data.uploadedDocumentIds;
 
+      console.log("✅ Files Uploaded");
+
+      // Start Polling
       const interval = setInterval(async () => {
 
         try {
 
           const res = await axios.get(
-            "http://localhost:5000/upload/documents"
+            `${API}/documents`
           );
 
-          const newDocs = res.data || [];
+          const docs = res.data || [];
 
-          setResults(newDocs);
+          setResults(docs);
 
-          console.log(
-            "Polling...",
-            newDocs.length
+          // Pending Uploaded Docs
+          const pendingDocs = docs.filter(
+            (doc) =>
+              uploadedIds.includes(doc._id) &&
+              ["queued", "processing"]
+                .includes(doc.status)
           );
 
-          // ✅ Stop immediately when new doc appears
-          if (newDocs.length > oldCount) {
+          // Stop Polling
+          if (!pendingDocs.length) {
 
             clearInterval(interval);
 
             setLoading(false);
 
             console.log(
-              "✅ New documents received"
+              "✅ Processing Completed"
             );
           }
 
         } catch (error) {
 
           console.error(
-            "Polling error:",
+            "Polling Error:",
             error
           );
 
@@ -96,95 +108,108 @@ function App() {
           setLoading(false);
         }
 
-      }, 3000);
+      }, 2000);
 
     } catch (error) {
 
-      console.error(error);
-
-      alert("Upload failed");
+      console.error(
+        "Upload Error:",
+        error
+      );
 
       setLoading(false);
+
+      alert("Upload failed");
     }
   };
 
-  // 💊 Medicine Fallback
+  // ================= MEDICINE EXTRACTION =================
   const getMedicines = (item) => {
-    if (item?.extractedData?.medicines?.length) {
-      return item.extractedData.medicines.join(", ");
-    }
 
-    const fallback =
-      item?.cleanText?.match(/\b[A-Z]{5,}\b/g) || [];
+    if (
+      item?.extractedData?.medicines?.length
+    ) {
+      return item.extractedData
+        .medicines
+        .join(", ");
+    }
 
     return (
-      fallback
-        .filter(
+      item?.cleanText
+        ?.match(/\b[A-Z]{5,}\b/g)
+
+        ?.filter(
           (w) =>
-            !w.includes("HOSP") &&
-            !w.includes("MED") &&
-            !w.includes("SOC") &&
+            !["HOSP", "MED", "SOC"]
+              .some((x) => w.includes(x)) &&
             w.length < 12
         )
-        .slice(0, 3)
-        .join(", ") || "N/A"
+
+        ?.slice(0, 3)
+
+        ?.join(", ")
+
+      || "N/A"
     );
   };
 
-  // 👤 Group By Patient
+  // ================= GROUP PATIENTS =================
   const groupedPatients = useMemo(() => {
-    const grouped = {};
 
-    results.forEach((item) => {
+    return results.reduce((acc, item) => {
+
       const patient =
-        item?.extractedData?.patientName?.trim() ||
-        "Unknown Patient";
+        item?.extractedData?.patientName?.trim()
+        || "Unknown Patient";
 
-      if (!grouped[patient]) {
-        grouped[patient] = [];
-      }
+      if (!acc[patient]) acc[patient] = [];
 
-      grouped[patient].push(item);
-    });
+      acc[patient].push(item);
 
-    return grouped;
+      return acc;
+
+    }, {});
+
   }, [results]);
 
-  // 🔍 Filtered Patients
+  // ================= FILTER PATIENTS =================
   const filteredPatients = useMemo(() => {
-    return Object.entries(groupedPatients).filter(
-      ([patientName, docs]) => {
 
-        const matchesSearch =
-          patientName
-            .toLowerCase()
+    return Object.entries(groupedPatients)
+      .filter(([patient, docs]) => {
+
+        const searchMatch =
+          patient.toLowerCase()
             .includes(searchTerm.toLowerCase());
 
-        const matchesType =
+        const typeMatch =
           selectedType === "All"
-            ? true
-            : docs.some((doc) =>
-                doc.type?.includes(selectedType)
-              );
+            || docs.some((doc) =>
+              doc.type?.includes(selectedType)
+            );
 
-        return matchesSearch && matchesType;
-      }
-    );
+        return searchMatch && typeMatch;
+      });
+
   }, [groupedPatients, searchTerm, selectedType]);
 
   return (
     <div style={styles.container}>
 
+      {/* ================= HEADER ================= */}
       <h1 style={styles.title}>
         🏥 Medical Document Analyzer
       </h1>
 
-      {/* Upload */}
+      {/* ================= UPLOAD ================= */}
       <div style={styles.uploadBox}>
+
         <input
           type="file"
           multiple
-          onChange={(e) => setFiles(e.target.files)}
+          onChange={(e) =>
+            setFiles(e.target.files)
+          }
         />
 
         <button
@@ -195,9 +220,10 @@ function App() {
             ? "⏳ Processing..."
             : "🚀 Upload & Analyze"}
         </button>
+
       </div>
 
-      {/* Filters */}
+      {/* ================= FILTERS ================= */}
       <div style={styles.filterBox}>
 
         <input
@@ -217,33 +243,36 @@ function App() {
           }
           style={styles.select}
         >
-          <option value="All">All</option>
-          <option value="Prescription">
-            Prescription
-          </option>
-          <option value="Bill">
-            Bill
-          </option>
-          <option value="Lab Report">
-            Lab Report
-          </option>
-          <option value="Receipt">
-            Receipt
-          </option>
-          <option value="Discharge Summary">
-            Discharge Summary
-          </option>
+
+          {[
+            "All",
+            "Prescription",
+            "Bill",
+            "Lab Report",
+            "Receipt",
+            "Discharge Summary",
+          ].map((type) => (
+
+            <option
+              key={type}
+              value={type}
+            >
+              {type}
+            </option>
+
+          ))}
+
         </select>
 
       </div>
 
       <h3>
-        Total Documents: {results.length}
+        📄 Total Documents: {results.length}
       </h3>
 
       <hr />
 
-      {/* 👤 Patients */}
+      {/* ================= DOCUMENTS ================= */}
       {filteredPatients.map(
         ([patientName, docs]) => (
 
@@ -265,39 +294,21 @@ function App() {
 
                 <h3>{item.fileName}</h3>
 
+                {/* STATUS */}
                 <p>
                   <b>Status:</b>{" "}
 
                   <span
                     style={{
-
-                      padding: "4px 10px",
-
-                      borderRadius: "20px",
-
-                      color: "white",
-
-                      fontWeight: "bold",
-
+                      ...styles.status,
                       backgroundColor:
-
-                        item.status === "queued"
-                          ? "#f59e0b"
-
-                        : item.status === "processing"
-                          ? "#3b82f6"
-
-                        : item.status === "completed"
-                          ? "#10b981"
-
-                        : "#ef4444",
+                        STATUS_COLORS[item.status],
                     }}
                   >
-
                     {item.status}
-
                   </span>
                 </p>
+
                 <p>
                   <b>📂 Type:</b>{" "}
                   {item.type?.join(", ")}
@@ -331,9 +342,11 @@ function App() {
   );
 }
 
+// ================= STYLES =================
 const styles = {
+
   container: {
-    padding: "30px",
+    padding: 30,
     backgroundColor: "#f3f4f6",
     minHeight: "100vh",
     fontFamily: "Arial",
@@ -341,60 +354,67 @@ const styles = {
 
   title: {
     textAlign: "center",
-    marginBottom: "20px",
+    marginBottom: 20,
   },
 
   uploadBox: {
     textAlign: "center",
-    marginBottom: "20px",
+    marginBottom: 20,
   },
 
   button: {
-    marginTop: "10px",
+    marginTop: 10,
     padding: "10px 20px",
     backgroundColor: "#2563eb",
-    color: "white",
+    color: "#fff",
     border: "none",
-    borderRadius: "6px",
+    borderRadius: 6,
     cursor: "pointer",
   },
 
   filterBox: {
     display: "flex",
-    gap: "10px",
-    marginBottom: "20px",
+    gap: 10,
+    marginBottom: 20,
   },
 
   searchInput: {
     flex: 1,
-    padding: "10px",
-    borderRadius: "6px",
+    padding: 10,
+    borderRadius: 6,
     border: "1px solid #ccc",
   },
 
   select: {
-    padding: "10px",
-    borderRadius: "6px",
+    padding: 10,
+    borderRadius: 6,
     border: "1px solid #ccc",
   },
 
   patientSection: {
-    marginBottom: "40px",
+    marginBottom: 40,
   },
 
   patientTitle: {
     color: "#2563eb",
-    marginBottom: "15px",
+    marginBottom: 15,
     borderBottom: "2px solid #2563eb",
-    paddingBottom: "5px",
+    paddingBottom: 5,
   },
 
   card: {
-    backgroundColor: "white",
-    borderRadius: "12px",
-    padding: "20px",
-    marginBottom: "15px",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 20,
+    marginBottom: 15,
     boxShadow: "0 4px 10px rgba(0,0,0,0.08)",
+  },
+
+  status: {
+    padding: "4px 10px",
+    borderRadius: 20,
+    color: "#fff",
+    fontWeight: "bold",
   },
 };
 
