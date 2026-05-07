@@ -36,35 +36,12 @@ function App() {
     }
   };
 
-  // ================= FILE UPLOAD =================
-  const handleUpload = async () => {
+  // ================= POLLING =================
+  const startPolling = (documentIds) => {
 
-    if (!files.length)
-      return alert("Please select files");
+    const interval = setInterval(
 
-    const formData = new FormData();
-
-    Array.from(files).forEach((file) =>
-      formData.append("files", file)
-    );
-
-    try {
-
-      setLoading(true);
-
-      // Upload Files
-      const uploadRes = await axios.post(
-        API,
-        formData
-      );
-
-      const uploadedIds =
-        uploadRes.data.uploadedDocumentIds;
-
-      console.log("✅ Files Uploaded");
-
-      // Start Polling
-      const interval = setInterval(async () => {
+      async () => {
 
         try {
 
@@ -76,13 +53,19 @@ function App() {
 
           setResults(docs);
 
-          // Pending Uploaded Docs
-          const pendingDocs = docs.filter(
-            (doc) =>
-              uploadedIds.includes(doc._id) &&
-              ["queued", "processing"]
-                .includes(doc.status)
-          );
+          // Pending Docs
+          const pendingDocs =
+            docs.filter(
+
+              (doc) =>
+
+                documentIds.includes(doc._id)
+
+                &&
+
+                ["queued", "processing"]
+                  .includes(doc.status)
+            );
 
           // Stop Polling
           if (!pendingDocs.length) {
@@ -108,7 +91,39 @@ function App() {
           setLoading(false);
         }
 
-      }, 2000);
+      },
+
+      2000
+    );
+  };
+
+  // ================= FILE UPLOAD =================
+  const handleUpload = async () => {
+
+    if (!files.length)
+      return alert("Please select files");
+
+    const formData = new FormData();
+
+    Array.from(files).forEach((file) =>
+      formData.append("files", file)
+    );
+
+    try {
+
+      setLoading(true);
+
+      // Upload Files
+      const uploadRes = await axios.post(
+        API,
+        formData
+      );
+
+      const uploadedIds = uploadRes.data.uploadedDocumentIds;
+
+      console.log("✅ Files Uploaded");
+
+      startPolling(uploadedIds);
 
     } catch (error) {
 
@@ -309,6 +324,41 @@ function App() {
                   </span>
                 </p>
 
+                {
+                  item.status === "failed" && (
+
+                    <button
+
+                      style={styles.retryButton}
+
+                      onClick={async () => {
+
+                        try {
+
+                          await axios.post(
+
+                            `${API}/retry/${item._id}`
+                          );
+
+                          alert("Retry Started");
+
+                          startPolling([item._id]);
+
+                        } catch (error) {
+
+                          console.error(error);
+
+                          alert("Retry Failed");
+                        }
+                      }}
+                    >
+
+                      🔄 Retry
+
+                    </button>
+                  )
+                }
+
                 <p>
                   <b>📂 Type:</b>{" "}
                   {item.type?.join(", ")}
@@ -350,6 +400,22 @@ const styles = {
     backgroundColor: "#f3f4f6",
     minHeight: "100vh",
     fontFamily: "Arial",
+  },
+  retryButton: {
+
+    marginTop: 10,
+
+    padding: "8px 14px",
+
+    backgroundColor: "#ef4444",
+
+    color: "#fff",
+
+    border: "none",
+
+    borderRadius: 6,
+
+    cursor: "pointer",
   },
 
   title: {
